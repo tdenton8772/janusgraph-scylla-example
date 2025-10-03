@@ -1,0 +1,57 @@
+services:
+  janusgraph:
+    image: janusgraph/janusgraph:latest
+    container_name: janusgraph-scylla
+    ports:
+      - "8182:8182"
+    volumes:
+      - ../config:/opt/janusgraph/conf/custom:ro
+      - janusgraph_data:/opt/janusgraph/data
+    command: ["bin/janusgraph-server.sh", "conf/custom/janusgraph-server-cql.yaml"]
+    environment:
+      - JANUS_PROPS_TEMPLATE=cql-configurable
+      - janusgraph.storage.backend=cql
+      - janusgraph.storage.hostname=${SCYLLA_HOST:-localhost}
+      - janusgraph.storage.port=${SCYLLA_PORT:-9042}
+      - janusgraph.storage.cql.keyspace=${SCYLLA_KEYSPACE:-janusgraph}
+      - janusgraph.storage.username=${SCYLLA_USERNAME:-}
+      - janusgraph.storage.password=${SCYLLA_PASSWORD:-}
+      - janusgraph.storage.cql.ssl.enabled=${SCYLLA_SSL_ENABLED:-false}
+      - janusgraph.storage.cql.ssl.hostname-validation=false
+      - janusgraph.storage.cql.ssl.truststore-type=JKS
+      - janusgraph.storage.cql.local-datacenter=AWS_US_EAST_1
+    # Let JanusGraph use its default startup process
+    depends_on:
+      - wait-for-scylla
+    networks:
+      - janusgraph-network
+
+  wait-for-scylla:
+    image: jwilder/dockerize:latest
+    environment:
+      - SCYLLA_HOST=${SCYLLA_HOST:-localhost}
+      - SCYLLA_PORT=${SCYLLA_PORT:-9042}
+    command: >
+      dockerize 
+      -wait tcp://${SCYLLA_HOST:-localhost}:${SCYLLA_PORT:-9042} 
+      -timeout 120s
+      -wait-retry-interval 5s
+    networks:
+      - janusgraph-network
+
+  # Optional local ScyllaDB for development (comment out when using cloud ScyllaDB)
+  # scylladb:
+  #   image: scylladb/scylla:latest
+  #   container_name: scylla-local
+  #   ports:
+  #     - "9042:9042"
+  #   command: --seeds=scylladb --smp 1 --memory 1G --overprovisioned 1 --api-address 0.0.0.0
+  #   networks:
+  #     - janusgraph-network
+
+volumes:
+  janusgraph_data:
+
+networks:
+  janusgraph-network:
+    driver: bridge

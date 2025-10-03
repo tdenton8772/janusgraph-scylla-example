@@ -1,0 +1,1 @@
+# JanusGraph ScyllaDB Example - E-commerce Package

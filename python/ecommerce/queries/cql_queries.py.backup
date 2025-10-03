@@ -1,0 +1,517 @@
+"""
+CQL query service for direct ScyllaDB operations.
+This demonstrates traditional relational/NoSQL access patterns optimized for specific queries.
+"""
+
+import logging
+import uuid
+from typing import List, Dict, Any, Optional
+from decimal import Decimal
+from datetime import datetime
+
+from cassandra.cluster import Session
+from cassandra.query import SimpleStatement
+
+from ..models import User, Product, Order, Review, OrderItem
+from ..services.database import db_manager
+from ..config import settings
+
+logger = logging.getLogger(__name__)
+
+
+class CQLQueryService:
+    """Service for CQL-based queries directly to ScyllaDB with shard-aware optimizations."""
+    
+    def __init__(self):
+        # Cache for prepared statements to improve performance
+        self._prepared_statements = {}
+        pass
+    
+    def _get_prepared_statement(self, session: Session, query: str, statement_name: str):
+        """Get or create a prepared statement for better performance with ScyllaDB."""
+        if statement_name not in self._prepared_statements:
+            self._prepared_statements[statement_name] = session.prepare(query)
+        return self._prepared_statements[statement_name]
+    
+    # Data insertion methods
+    
+    def insert_user(self, user: User) -> bool:
+        """Insert a user into the users table."""
+        try:
+            with db_manager.scylla.get_session() as session:
+                use_keyspace_query = "USE " + settings.database.ecommerce_keyspace
+                session.execute(use_keyspace_query)
+                
+                insert_query = """
+                INSERT INTO users (user_id, username, email, first_name, last_name, 
+                                 date_of_birth, registration_date, is_active, address, phone)
+                VALUES (%(user_id)s, %(username)s, %(email)s, %(first_name)s, %(last_name)s,
+                        %(date_of_birth)s, %(registration_date)s, %(is_active)s, %(address)s, %(phone)s)
+                """
+                
+                session.execute(insert_query, {
+                    'user_id': user.user_id,
+                    'username': user.username,
+                    'email': user.email,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'date_of_birth': user.date_of_birth,
+                    'registration_date': user.registration_date,
+                    'is_active': user.is_active,
+                    'address': user.address,
+                    'phone': user.phone
+                })
+                
+            logger.debug(f"Inserted user: {user.username}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to insert user {user.username}: {e}")
+            return False
+    
+    def insert_product(self, product: Product) -> bool:
+        """Insert a product into the products table and products_by_category table."""
+        try:
+            with db_manager.scylla.get_session() as session:
+                use_keyspace_query = "USE " + settings.database.ecommerce_keyspace
+                session.execute(use_keyspace_query)
+                
+                # Insert into main products table
+                insert_product_query = """
+                INSERT INTO products (product_id, name, description, price, category, brand, 
+                                    sku, stock_quantity, created_date, is_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                
+                session.execute(insert_product_query, [
+                    product.product_id, product.name, product.description, product.price,
+                    product.category, product.brand, product.sku, product.stock_quantity,
+                    product.created_date, product.is_active
+                ])
+                
+                # Insert into products_by_category table for category queries
+                insert_category_query = """
+                INSERT INTO products_by_category (category, product_id, name, price, brand, created_date)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """
+                
+                session.execute(insert_category_query, [
+                    product.category, product.product_id, product.name, product.price,
+                    product.brand, product.created_date
+                ])
+                
+            logger.debug(f"Inserted product: {product.name}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to insert product {product.name}: {e}")
+            return False
+    
+    def insert_order(self, order: Order) -> bool:
+        """Insert an order into the orders table and user_orders table."""
+        try:
+            with db_manager.scylla.get_session() as session:
+                use_keyspace_query = "USE " + settings.database.ecommerce_keyspace
+                session.execute(use_keyspace_query)
+                
+                # Insert into main orders table
+                insert_order_query = """
+                INSERT INTO orders (order_id, user_id, order_date, status, total_amount, 
+                                  shipping_address, payment_method)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """
+                
+                session.execute(insert_order_query, [
+                    order.order_id, order.user_id, order.order_date, order.status,
+                    order.total_amount, order.shipping_address, order.payment_method
+                ])
+                
+                # Insert into user_orders table for user order history queries
+                insert_user_order_query = """
+                INSERT INTO user_orders (user_id, order_id, order_date, status, total_amount)
+                VALUES (?, ?, ?, ?, ?)
+                """
+                
+                session.execute(insert_user_order_query, [
+                    order.user_id, order.order_id, order.order_date, order.status, order.total_amount
+                ])
+                
+            logger.debug(f"Inserted order: {order.order_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to insert order {order.order_id}: {e}")
+            return False
+    
+    def insert_order_item(self, order_item: OrderItem) -> bool:
+        """Insert an order item into the order_items table."""
+        try:
+            with db_manager.scylla.get_session() as session:
+                use_keyspace_query = "USE " + settings.database.ecommerce_keyspace
+                session.execute(use_keyspace_query)
+                
+                insert_query = """
+                INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+                VALUES (?, ?, ?, ?)
+                """
+                
+                session.execute(insert_query, [
+                    order_item.order_id, order_item.product_id,
+                    order_item.quantity, order_item.unit_price
+                ])
+                
+            logger.debug(f"Inserted order item: {order_item.order_id} -> {order_item.product_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to insert order item: {e}")
+            return False
+    
+    def insert_review(self, review: Review) -> bool:
+        """Insert a review into the reviews table and user_reviews table."""
+        try:
+            with db_manager.scylla.get_session() as session:
+                use_keyspace_query = "USE " + settings.database.ecommerce_keyspace
+                session.execute(use_keyspace_query)
+                
+                # Insert into main reviews table (partitioned by product_id)
+                insert_review_query = """
+                INSERT INTO reviews (product_id, review_id, user_id, rating, title, comment, 
+                                   review_date, is_verified_purchase)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                
+                session.execute(insert_review_query, [
+                    review.product_id, review.review_id, review.user_id, review.rating,
+                    review.title, review.comment, review.review_date, review.is_verified_purchase
+                ])
+                
+                # Insert into user_reviews table for user review history queries
+                insert_user_review_query = """
+                INSERT INTO user_reviews (user_id, review_id, product_id, rating, title, review_date)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """
+                
+                session.execute(insert_user_review_query, [
+                    review.user_id, review.review_id, review.product_id, review.rating,
+                    review.title, review.review_date
+                ])
+                
+            logger.debug(f"Inserted review: {review.title}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to insert review {review.title}: {e}")
+            return False
+    
+    # Query methods demonstrating CQL access patterns
+    
+    def find_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        """Find a user by username - requires full table scan (not optimal)."""
+        try:
+            with db_manager.scylla.get_session() as session:
+                use_keyspace_query = "USE " + settings.database.ecommerce_keyspace
+                session.execute(use_keyspace_query)
+                
+                # Note: This requires ALLOW FILTERING which is not recommended for production
+                # In a real scenario, you'd have a separate table partitioned by username
+                query = "SELECT * FROM users WHERE username = ? ALLOW FILTERING"
+                result = session.execute(query, [username])
+                row = result.one()
+                
+                if row:
+                    return {
+                        'user_id': row.user_id,
+                        'username': row.username,
+                        'email': row.email,
+                        'first_name': row.first_name,
+                        'last_name': row.last_name,
+                        'date_of_birth': row.date_of_birth,
+                        'registration_date': row.registration_date,
+                        'is_active': row.is_active,
+                        'address': row.address,
+                        'phone': row.phone
+                    }
+                return None
+        except Exception as e:
+            logger.error(f"Failed to find user by username {username}: {e}")
+            return None
+    
+    def get_user_orders(self, user_id: uuid.UUID, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get orders for a user - optimized query using user_orders table with prepared statements."""
+        try:
+            with db_manager.scylla.get_session() as session:
+                use_keyspace_query = "USE " + settings.database.ecommerce_keyspace
+                session.execute(use_keyspace_query)
+                
+                # Use prepared statement for better ScyllaDB performance
+                query = "SELECT * FROM user_orders WHERE user_id = ? LIMIT ?"
+                prepared_stmt = self._get_prepared_statement(session, query, "get_user_orders")
+                result = session.execute(prepared_stmt, [user_id, limit])
+                
+                orders = []
+                for row in result:
+                    orders.append({
+                        'user_id': row.user_id,
+                        'order_id': row.order_id,
+                        'order_date': row.order_date,
+                        'status': row.status,
+                        'total_amount': row.total_amount
+                    })
+                
+                return orders
+        except Exception as e:
+            logger.error(f"Failed to get user orders for {user_id}: {e}")
+            return []
+    
+    def get_product_reviews(self, product_id: uuid.UUID, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get reviews for a product - optimized query using reviews table partitioning."""
+        try:
+            with db_manager.scylla.get_session() as session:
+                use_keyspace_query = "USE " + settings.database.ecommerce_keyspace
+                session.execute(use_keyspace_query)
+                
+                query = "SELECT * FROM reviews WHERE product_id = ? LIMIT ?"
+                result = session.execute(query, [product_id, limit])
+                
+                reviews = []
+                for row in result:
+                    reviews.append({
+                        'product_id': row.product_id,
+                        'review_id': row.review_id,
+                        'user_id': row.user_id,
+                        'rating': row.rating,
+                        'title': row.title,
+                        'comment': row.comment,
+                        'review_date': row.review_date,
+                        'is_verified_purchase': row.is_verified_purchase
+                    })
+                
+                return reviews
+        except Exception as e:
+            logger.error(f"Failed to get product reviews for {product_id}: {e}")
+            return []
+    
+    def get_products_by_category(self, category: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get products by category - optimized using products_by_category table."""
+        try:
+            with db_manager.scylla.get_session() as session:
+                use_keyspace_query = "USE " + settings.database.ecommerce_keyspace
+                session.execute(use_keyspace_query)
+                
+                query = "SELECT * FROM products_by_category WHERE category = ? LIMIT ?"
+                result = session.execute(query, [category, limit])
+                
+                products = []
+                for row in result:
+                    products.append({
+                        'category': row.category,
+                        'product_id': row.product_id,
+                        'name': row.name,
+                        'price': row.price,
+                        'brand': row.brand,
+                        'created_date': row.created_date
+                    })
+                
+                return products
+        except Exception as e:
+            logger.error(f"Failed to get products by category {category}: {e}")
+            return []
+    
+    def get_order_items(self, order_id: uuid.UUID) -> List[Dict[str, Any]]:
+        """Get all items for a specific order."""
+        try:
+            with db_manager.scylla.get_session() as session:
+                use_keyspace_query = "USE " + settings.database.ecommerce_keyspace
+                session.execute(use_keyspace_query)
+                
+                query = "SELECT * FROM order_items WHERE order_id = ?"
+                result = session.execute(query, [order_id])
+                
+                items = []
+                for row in result:
+                    items.append({
+                        'order_id': row.order_id,
+                        'product_id': row.product_id,
+                        'quantity': row.quantity,
+                        'unit_price': row.unit_price
+                    })
+                
+                return items
+        except Exception as e:
+            logger.error(f"Failed to get order items for {order_id}: {e}")
+            return []
+    
+    def get_user_reviews(self, user_id: uuid.UUID, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get reviews written by a user - optimized using user_reviews table."""
+        try:
+            with db_manager.scylla.get_session() as session:
+                use_keyspace_query = "USE " + settings.database.ecommerce_keyspace
+                session.execute(use_keyspace_query)
+                
+                query = "SELECT * FROM user_reviews WHERE user_id = ? LIMIT ?"
+                result = session.execute(query, [user_id, limit])
+                
+                reviews = []
+                for row in result:
+                    reviews.append({
+                        'user_id': row.user_id,
+                        'review_id': row.review_id,
+                        'product_id': row.product_id,
+                        'rating': row.rating,
+                        'title': row.title,
+                        'review_date': row.review_date
+                    })
+                
+                return reviews
+        except Exception as e:
+            logger.error(f"Failed to get user reviews for {user_id}: {e}")
+            return []
+    
+    def get_product_details_with_reviews(self, product_id: uuid.UUID) -> Dict[str, Any]:
+        """Get product details along with its reviews - demonstrates join-like operation."""
+        try:
+            with db_manager.scylla.get_session() as session:
+                use_keyspace_query = "USE " + settings.database.ecommerce_keyspace
+                session.execute(use_keyspace_query)
+                
+                # Get product details
+                product_query = "SELECT * FROM products WHERE product_id = ?"
+                product_result = session.execute(product_query, [product_id])
+                product_row = product_result.one()
+                
+                if not product_row:
+                    return {}
+                
+                # Get product reviews
+                reviews_query = "SELECT * FROM reviews WHERE product_id = ? LIMIT 20"
+                reviews_result = session.execute(reviews_query, [product_id])
+                
+                reviews = []
+                total_rating = 0
+                for review_row in reviews_result:
+                    review = {
+                        'review_id': review_row.review_id,
+                        'user_id': review_row.user_id,
+                        'rating': review_row.rating,
+                        'title': review_row.title,
+                        'comment': review_row.comment,
+                        'review_date': review_row.review_date,
+                        'is_verified_purchase': review_row.is_verified_purchase
+                    }
+                    reviews.append(review)
+                    total_rating += review_row.rating
+                
+                # Calculate average rating
+                avg_rating = total_rating / len(reviews) if reviews else 0
+                
+                return {
+                    'product': {
+                        'product_id': product_row.product_id,
+                        'name': product_row.name,
+                        'description': product_row.description,
+                        'price': product_row.price,
+                        'category': product_row.category,
+                        'brand': product_row.brand,
+                        'sku': product_row.sku,
+                        'stock_quantity': product_row.stock_quantity,
+                        'created_date': product_row.created_date,
+                        'is_active': product_row.is_active
+                    },
+                    'reviews': reviews,
+                    'review_count': len(reviews),
+                    'average_rating': round(avg_rating, 2)
+                }
+                
+        except Exception as e:
+            logger.error(f"Failed to get product details with reviews for {product_id}: {e}")
+            return {}
+    
+    def search_products_by_price_range(self, min_price: Decimal, max_price: Decimal, limit: int = 10) -> List[Dict[str, Any]]:
+        """Search products by price range - requires full table scan."""
+        try:
+            with db_manager.scylla.get_session() as session:
+                use_keyspace_query = "USE " + settings.database.ecommerce_keyspace
+                session.execute(use_keyspace_query)
+                
+                # Note: This requires ALLOW FILTERING which is not recommended for production
+                # In a real scenario, you'd have a separate table partitioned by price ranges
+                query = """
+                SELECT * FROM products 
+                WHERE price >= ? AND price <= ? 
+                ALLOW FILTERING 
+                LIMIT ?
+                """
+                result = session.execute(query, [min_price, max_price, limit])
+                
+                products = []
+                for row in result:
+                    products.append({
+                        'product_id': row.product_id,
+                        'name': row.name,
+                        'description': row.description,
+                        'price': row.price,
+                        'category': row.category,
+                        'brand': row.brand,
+                        'sku': row.sku,
+                        'stock_quantity': row.stock_quantity,
+                        'created_date': row.created_date,
+                        'is_active': row.is_active
+                    })
+                
+                return products
+        except Exception as e:
+            logger.error(f"Failed to search products by price range: {e}")
+            return []
+    
+    def get_order_summary_with_items(self, order_id: uuid.UUID) -> Dict[str, Any]:
+        """Get complete order summary with all items - demonstrates multiple table queries."""
+        try:
+            with db_manager.scylla.get_session() as session:
+                use_keyspace_query = "USE " + settings.database.ecommerce_keyspace
+                session.execute(use_keyspace_query)
+                
+                # Get order details
+                order_query = "SELECT * FROM orders WHERE order_id = ?"
+                order_result = session.execute(order_query, [order_id])
+                order_row = order_result.one()
+                
+                if not order_row:
+                    return {}
+                
+                # Get order items
+                items_query = "SELECT * FROM order_items WHERE order_id = ?"
+                items_result = session.execute(items_query, [order_id])
+                
+                items = []
+                for item_row in items_result:
+                    # Get product details for each item
+                    product_query = "SELECT name, price FROM products WHERE product_id = ?"
+                    product_result = session.execute(product_query, [item_row.product_id])
+                    product_row = product_result.one()
+                    
+                    item = {
+                        'product_id': item_row.product_id,
+                        'product_name': product_row.name if product_row else 'Unknown',
+                        'quantity': item_row.quantity,
+                        'unit_price': item_row.unit_price,
+                        'total_price': item_row.unit_price * item_row.quantity
+                    }
+                    items.append(item)
+                
+                return {
+                    'order': {
+                        'order_id': order_row.order_id,
+                        'user_id': order_row.user_id,
+                        'order_date': order_row.order_date,
+                        'status': order_row.status,
+                        'total_amount': order_row.total_amount,
+                        'shipping_address': order_row.shipping_address,
+                        'payment_method': order_row.payment_method
+                    },
+                    'items': items,
+                    'item_count': len(items)
+                }
+                
+        except Exception as e:
+            logger.error(f"Failed to get order summary for {order_id}: {e}")
+            return {}
+
+
+# Global CQL query service instance
+cql_service = CQLQueryService()

@@ -1,0 +1,22 @@
+# Core dependencies for JanusGraph and ScyllaDB integration
+gremlinpython>=3.7.0        # Gremlin client for JanusGraph
+scylla-driver==3.29.3       # ScyllaDB shard-aware driver for direct CQL access
+faker==19.6.2               # Generate realistic fake data
+
+# Data processing and utilities
+python-dotenv==1.0.0        # Environment variable management
+pydantic==2.4.2             # Data validation and settings management
+click==8.1.7                # Command-line interface creation
+
+# Development and testing
+pytest==7.4.2              # Testing framework
+pytest-asyncio==0.21.1     # Async testing support
+
+# Logging and monitoring
+structlog==23.1.0           # Structured logging
+colorama==0.4.6             # Colored terminal output
+
+# Optional: Jupyter notebook support for data exploration
+jupyter==1.0.0
+pandas>=2.3.0
+matplotlib>=3.8.0
